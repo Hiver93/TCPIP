@@ -8,8 +8,11 @@
 #define TURN_CHECK C
 #define ADDR "127.0.0.1"
 #define PORT "9190"
+#define ENOUGH 'E'
+#define NEED_PLAYER "P"
 void ErrorHandling(char* message);
 void PrintCount(int count, int num);
+int IsGameOver(int count);
 
 int main(int argc, char* argv[])
 {
@@ -47,31 +50,61 @@ int main(int argc, char* argv[])
 		if (ID == 0)
 		{
 			printf(" ID 줘\n");
-			Sleep(1000);
 			send(hSocket, "G", 1, 0);
-			strLen = recv(hSocket, message, BUF_SIZE - 1, 0);
-			message[strLen] = 0;
-			
-			ID = message[0] - '0';
-			printf("당신의 ID : %d\n",ID);
-			send(hSocket, "C", strlen("C"), 0);
+			strLen = recv(hSocket, message, 2, 0);
+			message[2] = 0;
+			printf("제가받은 값은 %c", message[0]);
+			ID = message[0] - '0';			
+			printf("당신의 번호 : %d\n",ID);
+			send(hSocket, NEED_PLAYER, 1, 0);
 		}
 		// 할당 받은 후
 		else
-		{		
+		{	
+			// 플레이어 수 확인
+			while (1)
+			{
+				strLen = recv(hSocket, message, 1, 0);
+				if (message[0] == ENOUGH)
+				{
+					send(hSocket, "C", 1, 0);
+					printf("2명됨");
+					break;
+				}				
+				send(hSocket, "P", 1, 0);
+			}
+
+			// 게임시작
 			while (1) // 내턴이 아닐경우 계속 체크
 			{
-				Sleep(1000);
 				send(hSocket, "C", strlen("C"), 0);
 				//printf("체크중");
 				strLen = recv(hSocket, message, 2, 0);
 				message[strLen] = 0;
-				if (message[0] == '0' + ID) // 내턴이라면 (내 아이디의 턴이라면)
+				if (message[0] == 'R')
 				{
+					printf("상대가 나갔습니다. 이제 당신이 1번 플레이어 입니다.\n");
+					count = 0;
+					ID = 1;
+					break;
+				}
+				else if (message[0] == '0' + ID) // 내턴이라면 (내 아이디의 턴이라면)
+				{
+					printf("\n%d,  %ch\n", count, message[1]);
 					PrintCount(count, message[1] - '0');
 					count += message[1] - '0';
+
+					// 게임오버 체크
+					if (IsGameOver(count))
+					{
+						printf("\n당신은 살아 남았다. 게임 다시 시작\n");
+						count = 0;
+						continue;
+					}
+
+					// 버퍼초기화
 					long tmp_long = 0;
-					char tmp_char;
+					char tmp_char;					
 					if (ioctlsocket(hSocket, FIONREAD, &tmp_long) != SOCKET_ERROR)
 					{
 						for (int i = 0; i < tmp_long; i++)
@@ -79,19 +112,23 @@ int main(int argc, char* argv[])
 							recv(hSocket, &tmp_char, sizeof(char), 0);
 						}
 					}
-					fputs("Input message(Q to quit): ", stdout);
+					fputs("당신의 턴입니다. 1~3의 수를 입력하세요.(Q to quit): ", stdout);
 					fgets(message, BUF_SIZE, stdin);
 
 					if (!strcmp(message, "q\n") || !strcmp(message, "Q\n"))
 					{
+						send(hSocket, "Q", 1, 0);
 						closesocket(hSocket);
 						WSACleanup();
 						return 0;
 					}
 					PrintCount(count, message[0] - '0');
 					count += (message[0]-'0');
-					send(hSocket, message, strlen(message), 0);
-					strLen = recv(hSocket, message, BUF_SIZE - 1, 0);
+					
+					send(hSocket, message, 1, 0);
+					
+					// 버퍼 초기화
+					tmp_long = 0;
 					if (ioctlsocket(hSocket, FIONREAD, &tmp_long) != SOCKET_ERROR)
 					{
 						for (int i = 0; i < tmp_long; i++)
@@ -99,7 +136,17 @@ int main(int argc, char* argv[])
 							recv(hSocket, &tmp_char, sizeof(char), 0);
 						}
 					}
+
+					// 게임 오버 체크
+					if (IsGameOver(count))
+					{
+						printf("\n당신은 죽었다. 게임 다시 시작\n");
+						count = 0;
+						continue;
+					}
+					
 				}
+				// 버퍼초기화
 				long tmp_long = 0;
 				char tmp_char;
 				if (ioctlsocket(hSocket, FIONREAD, &tmp_long) != SOCKET_ERROR)
@@ -111,22 +158,22 @@ int main(int argc, char* argv[])
 				}
 
 			}
-			send(hSocket, myID, strlen(myID), 0);
-			strLen = recv(hSocket, message, BUF_SIZE - 1, 0);
-			message[strLen] = 0;
-			if (message[0] == '1')
-			{
-				fputs("Input message(Q to quit): ", stdout);
-				fgets(message, BUF_SIZE, stdin);
+			//send(hSocket, myID, strlen(myID), 0);
+			//strLen = recv(hSocket, message, BUF_SIZE - 1, 0);
+			//message[strLen] = 0;
+			//if (message[0] == '1')
+			//{
+			//	fputs("Input message(Q to quit): ", stdout);
+			//	fgets(message, BUF_SIZE, stdin);
 
-				if (!strcmp(message, "q\n") || !strcmp(message, "Q\n"))
-					break;
+			//	if (!strcmp(message, "q\n") || !strcmp(message, "Q\n"))
+			//		break;
 
-				send(hSocket, message, strlen(message), 0);
-				strLen = recv(hSocket, message, BUF_SIZE - 1, 0);
-				message[strLen] = 0;
-				printf("Message from server: %s", message);
-			}
+			//	send(hSocket, message, strlen(message), 0);
+			//	strLen = recv(hSocket, message, BUF_SIZE - 1, 0);
+			//	message[strLen] = 0;
+			//	printf("Message from server: %s", message);
+			//}
 
 			//fputs("Input message(Q to quit): ", stdout);
 			//fgets(message, BUF_SIZE, stdin);
@@ -170,4 +217,11 @@ void PrintCount(int count, int num)
 	{
 		printf("%d ",count+i);
 	}
+}
+
+int IsGameOver(int count)
+{
+	if (31 < count)
+		return 1;
+	return 0;
 }

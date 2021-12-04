@@ -4,11 +4,13 @@
 #include <winsock2.h>
 
 #define BUF_SIZE 30
+#define NEED_PLAYER 'P'
 #define TURN_CHECK 'C'
 #define ADDR "127.0.0.1"
 #define PORT "9190"
 void ErrorHandling(char* message);
 void Check(char* buf);
+int IsGameOver(int count);
 
 int main(int argc, char* argv[])
 {
@@ -17,7 +19,9 @@ int main(int argc, char* argv[])
 	SOCKADDR_IN servAdr, clntAdr;
 	TIMEVAL timeout;
 	fd_set reads, cpyReads;
-
+	SOCKET socks[100];
+	int sockCnt = 0;
+	int sockNum = 0;
 	
 	int adrSz;
 	int strLen, fdNum, i;
@@ -28,6 +32,7 @@ int main(int argc, char* argv[])
 	int check = 0; // 번호를 받았는가
 	int turn = 1; // 현재 턴
 	int num=0; // 클라이언트에게서 받은 값
+	int GameOver = 0;
 
 	
 	if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
@@ -69,6 +74,9 @@ int main(int argc, char* argv[])
 					adrSz = sizeof(clntAdr);
 					hClntSock =
 						accept(hServSock, (SOCKADDR*)&clntAdr, &adrSz);
+					socks[sockNum] = hClntSock;
+					sockNum++;
+					sockCnt++;
 					FD_SET(hClntSock, &reads);
 					printf("connected client: %d \n", hClntSock);
 				}
@@ -77,6 +85,7 @@ int main(int argc, char* argv[])
 					strLen = recv(reads.fd_array[i], buf, 1, 0);
 					if (buf[0]=='G') // 소켓에 id 할당
 					{
+						printf("할당 전 %d\n", ID);
 						long tmp_long = 0;
 						char tmp_char;
 						if (ioctlsocket(hServSock, FIONREAD, &tmp_long) != SOCKET_ERROR)
@@ -86,16 +95,38 @@ int main(int argc, char* argv[])
 								recv(hServSock, &tmp_char, sizeof(char), 0);
 							}
 						}
-						printf("안녕");
-						char message[2];
-						sprintf_s(message, sizeof(message), "%d", ID);
-						// 버퍼비우기
-						
-						send(reads.fd_array[i], message, strlen(message), 0);
+						printf("안녕\n");
+						char message[3];
+						sprintf_s(message, sizeof(message), "%d%d", ID,0);
+						printf("%d\n", ID);
+						printf("할당 중간 %c\n", message[0]);
 						ID++;
+						send(reads.fd_array[i], message, 2, 0);
+						printf("할당 후 %d\n", ID);
 					}
+
+					// 플레이어 수 확인
+					else if (buf[0] == NEED_PLAYER)
+					{
+						char message[2] = "N";
+						long tmp_long = 0;
+						char tmp_char;
+						if (ioctlsocket(hServSock, FIONREAD, &tmp_long) != SOCKET_ERROR)
+						{
+							for (int i = 0; i < tmp_long; i++)
+							{
+								recv(hServSock, &tmp_char, sizeof(char), 0);
+							}
+						}
+						if (sockCnt == 2)
+						{
+							message[0] = 'E';
+						}
+						send(reads.fd_array[i], message, 1, 0);
+					}
+
 					// 번호를 받음
-					else if (buf[0] <= '3' && '1' <= buf[0]) 
+					else if (buf[0] <= '9' && '1' <= buf[0]) 
 					{					
 						num = buf[0] - '0';
 						count += buf[0] - '0'; // 카운트 값 증가
@@ -112,38 +143,30 @@ int main(int argc, char* argv[])
 						turn ^= 3; // 턴변경
 						char message[2];
 						sprintf_s(message, sizeof(message), "%d", turn);
-						send(reads.fd_array[i], message, strlen(message), 0);
+						send(reads.fd_array[i], message, 1, 0);
 					}
+
 					// 클라이언트에서 턴 요구
 					else if (buf[0] == TURN_CHECK) 
 					{
-						long tmp_long = 0;
-						char tmp_char;
-						if (ioctlsocket(hServSock, FIONREAD, &tmp_long) != SOCKET_ERROR)
-						{
-							for (int i = 0; i < tmp_long; i++)
-							{
-								recv(hServSock, &tmp_char, sizeof(char), 0);
-							}
-						}
-						if (!check) // 아직 상대에게서 번호를 받지 못한경우
-						{
-							char message[3];
-							sprintf_s(message, sizeof(message), "%d""%d", turn, num);
-							send(reads.fd_array[i], message, strlen(message), 0);
-						}
-						else // 상대에게서 번호를 받은 경우
-						{
-							check = 0; // 번호 못받은 상태로 변경
-							char message[3];
-							sprintf_s(message, sizeof(message), "%d""%d", turn, num);
-							send(reads.fd_array[i], message, strlen(message), 0);
-						}
+						 check = 0; // 번호 못받은 상태로 변경
+						 char message[3];
+						 sprintf_s(message, sizeof(message), "%d%d", turn, num);
+						 
+						 send(reads.fd_array[i], message, 2, 0);
+						 if (IsGameOver(count))
+						 {
+						 	 count = 0;
+						 	 num = 0;
+						 }
 					}
-					else if (strLen == 0) // 연결끊기
+
+					// 상대 접속 종료
+					else if (buf[0]=='Q') // 연결끊기
 					{
 						long tmp_long = 0;
 						char tmp_char;
+						
 						if (ioctlsocket(hServSock, FIONREAD, &tmp_long) != SOCKET_ERROR)
 						{
 							for (int i = 0; i < tmp_long; i++)
@@ -153,14 +176,28 @@ int main(int argc, char* argv[])
 						}
 						FD_CLR(reads.fd_array[i], &reads);
 						closesocket(cpyReads.fd_array[i]);
+						
+						// 클라이언트 상태가 처음으로 돌아가게 전송
+						sockCnt--;
+						count = 0;
+						ID--;
+						num = 0;
+						for(int i = 0; i<sockNum;i++)
+						    send(socks[i], "R", 1, 0);
+
 						printf("closed client: %d \n", cpyReads.fd_array[i]);
 					}
 					else // 오류
 					{
+					    char message[3] = "  ";
+						//printf("%s", buf);
 						printf("여기 오면 안됨");
-						printf("%d", strcmp("GetID\n", buf));
+						//message[0] = turn + '0';
+						//message[1] = num + '0';
+						//printf("%c %c", message[0], message[1]);
+						//send(reads.fd_array[i], message, 2, 0);
+						//printf("%d", strcmp("GetID\n", buf));
 						Check(buf);
-						send(reads.fd_array[i], buf, strLen, 0);
 					}
 				}
 
@@ -189,4 +226,10 @@ void Check(char* buf)
 		i++;
 	}
 	printf("%d", c);
+}
+int IsGameOver(int count)
+{
+	if (31 < count)
+		return 1;
+	return 0;
 }
